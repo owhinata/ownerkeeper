@@ -1,70 +1,62 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Normalize to repo root (git runs hooks at repo root, but be explicit)
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$REPO_ROOT"
+
 # Format C# code before commit.
 # - Uses local dotnet tool CSharpier (printWidth=86)
-# - Uses dotnet format as a secondary pass
+# - Only runs if there are changes under the `csharp/` directory
 
-if ! command -v dotnet >/dev/null 2>&1; then
-  echo "[pre-commit] dotnet is not installed; skipping formatting." >&2
-  exit 0
-fi
-
-# Restore local tools quietly (CSharpier). If offline, continue without failing.
-dotnet tool restore >/dev/null 2>&1 || true
-
-echo "[pre-commit] Running CSharpier..."
-dotnet csharpier format . || true
-
-collect_changed_projects() {
-  local has_ownerkeeper=0
-  local has_tests=0
+has_csharp_changes() {
   while IFS= read -r line; do
     [[ -z "$line" ]] && continue
     local path="${line:3}"
     if [[ "$path" == *" -> "* ]]; then
       path="${path##* -> }"
     fi
-
-    case "$path" in
-      csharp/OwnerKeeper/*|csharp/OwnerKeeper.csproj|csharp/OwnerKeeper/*.csproj|csharp/OwnerKeeper/*.cs)
-        has_ownerkeeper=1
-        ;;
-      csharp/OwnerKeeper.Tests/*|csharp/OwnerKeeper.Tests.csproj|csharp/OwnerKeeper.Tests/*.csproj|csharp/OwnerKeeper.Tests/*.cs)
-        has_tests=1
-        ;;
-      csharp/Directory.Build.props|csharp/Directory.Build.targets)
-        has_ownerkeeper=1
-        has_tests=1
-        ;;
-    esac
+    [[ "$path" == csharp/* ]] && return 0
   done < <(git status --porcelain)
-
-  local projects=()
-  (( has_ownerkeeper )) && projects+=("csharp/OwnerKeeper/OwnerKeeper.csproj")
-  (( has_tests )) && projects+=("csharp/OwnerKeeper.Tests/OwnerKeeper.Tests.csproj")
-
-  if (( ${#projects[@]} > 0 )); then
-    printf '%s\n' "${projects[@]}"
-  fi
+  return 1
 }
 
-projects_to_format=()
-while IFS= read -r project; do
-  [[ -z "$project" ]] && continue
-  projects_to_format+=("$project")
-done < <(collect_changed_projects)
+if has_csharp_changes; then
+  if ! command -v dotnet >/dev/null 2>&1; then
+    echo "[pre-commit] dotnet is not installed; skipping CSharpier." >&2
+  else
+    # Keep CLI noise low but use global caches (unified policy)
+    export DOTNET_CLI_TELEMETRY_OPTOUT=1
+    export DOTNET_NOLOGO=1
 
-if (( ${#projects_to_format[@]} > 0 )); then
-  echo "[pre-commit] Running dotnet format on: ${projects_to_format[*]}"
-  for project in "${projects_to_format[@]}"; do
-    dotnet format "$project" -v minimal || true
-  done
+    # Restore local tools quietly (CSharpier). If offline or feed issue, continue.
+    TOOL_MANIFEST="csharp/.config/dotnet-tools.json"
+    if [[ -f "$TOOL_MANIFEST" ]]; then
+      DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet tool restore \
+        --tool-manifest "$TOOL_MANIFEST" \
+        >/dev/null 2>&1 || true
+    fi
+
+    echo "[pre-commit] C# changes detected; running CSharpier in csharp/ ..."
+    # Prefer local tool manifest: run from csharp/ so it picks local config.
+    if ( cd csharp && dotnet tool run dotnet-csharpier --version >/dev/null 2>&1 ); then
+      ( cd csharp && dotnet tool run dotnet-csharpier . ) || true
+    elif ( cd csharp && dotnet tool run csharpier --version >/dev/null 2>&1 ); then
+      ( cd csharp && dotnet tool run csharpier . ) || true
+    else
+      # Global tool fallback (runs from csharp/ to pick local config)
+      if command -v dotnet-csharpier >/dev/null 2>&1; then
+        ( cd csharp && dotnet-csharpier . ) || true
+      else
+        echo "[pre-commit] CSharpier not available (local restore/global tool). Skipping." >&2
+      fi
+    fi
+  fi
 else
-  echo "[pre-commit] No C# project changes detected; skipping dotnet format."
+  echo "[pre-commit] No changes under csharp/; skipping CSharpier."
 fi
 
-# Stage any changes produced by the formatters.
-git add -A
+# Stage any changes produced by the formatter for tracked files only.
+git add -u
 
 exit 0
