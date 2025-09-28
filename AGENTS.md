@@ -3,7 +3,7 @@
 ## 1. 参照ドキュメント
 - 要件定義: [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md)
 - 要件分析 (SysML): [`docs/REQUIREMENTS_DIAGRAM.md`](docs/REQUIREMENTS_DIAGRAM.md)
-- 仕様書: [`docs/SPECS.md`](docs/SPECS.md)
+- 仕様書: [`docs/SPECS_csharp.md`](docs/SPECS_csharp.md)
 - 実装計画: [`docs/SCHEDULE.md`](docs/SCHEDULE.md)
 
 各実装・レビュー時には上記ドキュメントを基準とし、対応する要件IDや
