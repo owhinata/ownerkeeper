@@ -14,9 +14,11 @@ public sealed class OwnerKeeperOptions
     /// <summary>Operation timeouts (placeholder).</summary>
     public OperationTimeouts? Timeouts { get; init; }
 
-    /// <summary>Auto register metrics (not used in Phase 5/6).</summary>
-    /// <summary>Auto register metrics (no-op in current phase).</summary>
+    /// <summary>Auto register metrics.</summary>
     public bool AutoRegisterMetrics { get; init; }
+
+    /// <summary>Enable verbose debug logs.</summary>
+    public bool DebugMode { get; init; }
 }
 
 /// <summary>Timeout settings for operations (placeholder for future phases).</summary>

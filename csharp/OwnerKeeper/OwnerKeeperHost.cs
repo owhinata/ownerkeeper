@@ -25,6 +25,7 @@ public sealed class OwnerKeeperHost : IDisposable
     private EventHub? _events;
     private ResourceManager? _resources;
     private OperationScheduler? _scheduler;
+    private Core.Metrics.MetricsCollector? _metrics;
 
     private OwnerKeeperHost() { }
 
@@ -40,7 +41,16 @@ public sealed class OwnerKeeperHost : IDisposable
             _logger = new ConsoleLogger();
             _events = new EventHub(_logger);
             _resources = new ResourceManager();
-            _scheduler = new OperationScheduler(_events, _resources, _logger);
+            _metrics = options.AutoRegisterMetrics
+                ? new Core.Metrics.MetricsCollector()
+                : null;
+            _scheduler = new OperationScheduler(
+                _events,
+                _resources,
+                _logger,
+                _metrics,
+                options.DebugMode
+            );
 
             // Pre-register resources, bind adapters, and set initial state to Ready.
             var count = Math.Max(0, options.CameraCount);
@@ -70,6 +80,8 @@ public sealed class OwnerKeeperHost : IDisposable
             _events = null;
             _logger = null;
             _options = null;
+            _metrics?.Dispose();
+            _metrics = null;
             _initialized = false;
         }
     }

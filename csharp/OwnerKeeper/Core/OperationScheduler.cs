@@ -3,6 +3,7 @@ using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
 using OwnerKeeper.Core.Logging;
+using OwnerKeeper.Core.Metrics;
 using OwnerKeeper.Domain;
 
 namespace OwnerKeeper.Core;
@@ -19,6 +20,8 @@ public sealed class OperationScheduler : IDisposable
     private readonly EventHub _events;
     private readonly ResourceManager _resources;
     private readonly ILogger _logger;
+    private readonly MetricsCollector? _metrics;
+    private readonly bool _debug;
 
     private static readonly ErrorCode Cancelled = new("CT", 0001);
 
@@ -26,12 +29,16 @@ public sealed class OperationScheduler : IDisposable
     public OperationScheduler(
         EventHub events,
         ResourceManager resources,
-        ILogger logger
+        ILogger logger,
+        MetricsCollector? metrics = null,
+        bool debugMode = false
     )
     {
         _events = events;
         _resources = resources;
         _logger = logger;
+        _metrics = metrics;
+        _debug = debugMode;
         _channel = Channel.CreateUnbounded<OperationRequest>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false }
         );
@@ -62,6 +69,7 @@ public sealed class OperationScheduler : IDisposable
             LogLevel.Info,
             $"Accepted {op} id={id} opId={ticket.OperationId}"
         );
+        _metrics?.RecordOperation(op.ToString());
         return ticket;
     }
 
@@ -104,6 +112,7 @@ public sealed class OperationScheduler : IDisposable
                 {
                     try
                     {
+                        var started = DateTime.UtcNow;
                         var ticket = StateMachine.BeginOperation(
                             _resources,
                             req.Id,
@@ -115,6 +124,10 @@ public sealed class OperationScheduler : IDisposable
                             _logger.Log(
                                 LogLevel.Error,
                                 $"Immediate failure: {ticket.ErrorCode} for opId={req.OperationId}"
+                            );
+                            _metrics?.RecordFailure(
+                                req.Operation.ToString(),
+                                ticket.ErrorCode?.ToString() ?? "unknown"
                             );
                             continue; // No event per policy
                         }
@@ -173,6 +186,10 @@ public sealed class OperationScheduler : IDisposable
                                 timestampUtc: DateTime.UtcNow
                             );
                             _events.DispatchOperationCompleted(this, args);
+                            _metrics?.ObserveLatency(
+                                req.Operation.ToString(),
+                                DateTime.UtcNow - started
+                            );
                         }
                         catch (Exception ex)
                         {
@@ -192,6 +209,10 @@ public sealed class OperationScheduler : IDisposable
                                 timestampUtc: DateTime.UtcNow
                             );
                             _events.DispatchOperationCompleted(this, args);
+                            _metrics?.RecordFailure(
+                                req.Operation.ToString(),
+                                "HW1001"
+                            );
                         }
                     }
                     catch (Exception ex)
