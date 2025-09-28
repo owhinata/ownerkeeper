@@ -123,6 +123,21 @@ public sealed class ResourceManager : IDisposable
     public ResourceDescriptor? TryGet(ResourceId id) =>
         _table.TryGetValue(id, out var d) ? d : null;
 
+    /// <summary>Register or replace the hardware adapter for a resource.</summary>
+    public void RegisterAdapter(ResourceId id, Hardware.IHardwareResource adapter)
+    {
+        _rw.EnterWriteLock();
+        try
+        {
+            var desc = _table.GetOrAdd(id, static key => new ResourceDescriptor(key));
+            desc.Adapter = adapter;
+        }
+        finally
+        {
+            _rw.ExitWriteLock();
+        }
+    }
+
     /// <summary>
     /// Set the state of a resource under write lock. Creates the descriptor if
     /// not present. Intended for initialization and controlled transitions.

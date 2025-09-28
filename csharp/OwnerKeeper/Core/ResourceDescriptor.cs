@@ -1,5 +1,6 @@
 using System.Threading;
 using OwnerKeeper.Domain;
+using OwnerKeeper.Hardware;
 
 namespace OwnerKeeper.Core;
 
@@ -17,6 +18,9 @@ public sealed class ResourceDescriptor
 
     /// <summary>Current single owner (if any). (REQ-OW-001)</summary>
     public OwnerToken? CurrentOwner { get; internal set; }
+
+    /// <summary>Bound hardware adapter for this resource.</summary>
+    public IHardwareResource? Adapter { get; internal set; }
 
     /// <summary>
     /// Immediate occupancy lock; Wait(0) must be used for conflict detection. (REQ-RC-001)

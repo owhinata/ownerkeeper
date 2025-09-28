@@ -119,18 +119,80 @@ public sealed class OperationScheduler : IDisposable
                             continue; // No event per policy
                         }
 
-                        var state = _resources.GetState(req.Id);
-                        var args = new OperationCompletedEventArgs(
-                            req.Id,
-                            req.OperationId,
-                            true,
-                            req.Operation,
-                            state,
-                            metadata: null,
-                            errorCode: null,
-                            timestampUtc: DateTime.UtcNow
-                        );
-                        _events.DispatchOperationCompleted(this, args);
+                        try
+                        {
+                            var adapter = _resources.TryGet(req.Id)?.Adapter;
+                            if (adapter is not null)
+                            {
+                                switch (req.Operation)
+                                {
+                                    case OperationType.StartStreaming:
+                                        await adapter
+                                            .StartAsync(_cts.Token)
+                                            .ConfigureAwait(false);
+                                        break;
+                                    case OperationType.Stop:
+                                        await adapter
+                                            .StopAsync(_cts.Token)
+                                            .ConfigureAwait(false);
+                                        break;
+                                    case OperationType.Pause:
+                                        await adapter
+                                            .PauseAsync(_cts.Token)
+                                            .ConfigureAwait(false);
+                                        break;
+                                    case OperationType.Resume:
+                                        await adapter
+                                            .ResumeAsync(_cts.Token)
+                                            .ConfigureAwait(false);
+                                        break;
+                                    case OperationType.UpdateConfiguration:
+                                        await adapter
+                                            .UpdateConfigurationAsync(
+                                                new CameraConfiguration(
+                                                    new CameraResolution(1920, 1080),
+                                                    PixelFormat.Rgb24,
+                                                    new FrameRate(30)
+                                                ),
+                                                _cts.Token
+                                            )
+                                            .ConfigureAwait(false);
+                                        break;
+                                }
+                            }
+
+                            var state = _resources.GetState(req.Id);
+                            var args = new OperationCompletedEventArgs(
+                                req.Id,
+                                req.OperationId,
+                                true,
+                                req.Operation,
+                                state,
+                                metadata: null,
+                                errorCode: null,
+                                timestampUtc: DateTime.UtcNow
+                            );
+                            _events.DispatchOperationCompleted(this, args);
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Log(
+                                LogLevel.Error,
+                                $"Hardware op failed: {ex.Message}"
+                            );
+                            var state = _resources.GetState(req.Id);
+                            var args = new OperationCompletedEventArgs(
+                                req.Id,
+                                req.OperationId,
+                                false,
+                                req.Operation,
+                                state,
+                                metadata: null,
+                                errorCode: new ErrorCode("HW", 1001),
+                                timestampUtc: DateTime.UtcNow
+                            );
+                            _events.DispatchOperationCompleted(this, args);
+                        }
                     }
                     catch (Exception ex)
                     {
