@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
+using OwnerKeeper.API;
 using OwnerKeeper.Core.Logging;
 using OwnerKeeper.Core.Metrics;
 using OwnerKeeper.Domain;
@@ -22,8 +24,12 @@ public sealed class OperationScheduler : IDisposable
     private readonly ILogger _logger;
     private readonly MetricsCollector? _metrics;
     private readonly bool _debug;
+    private readonly CameraConfiguration _defaultConfiguration;
+    private readonly OperationTimeouts _timeouts;
 
     private static readonly ErrorCode Cancelled = new("CT", 0001);
+    private static readonly ErrorCode TimeoutError = new("CT", 0002);
+    private static readonly ErrorCode HardwareFailure = new("HW", 1001);
 
     /// <summary>Create a scheduler with an unbounded channel.</summary>
     public OperationScheduler(
@@ -31,7 +37,9 @@ public sealed class OperationScheduler : IDisposable
         ResourceManager resources,
         ILogger logger,
         MetricsCollector? metrics = null,
-        bool debugMode = false
+        bool debugMode = false,
+        CameraConfiguration? defaultConfiguration = null,
+        OperationTimeouts? timeouts = null
     )
     {
         _events = events;
@@ -39,6 +47,14 @@ public sealed class OperationScheduler : IDisposable
         _logger = logger;
         _metrics = metrics;
         _debug = debugMode;
+        _defaultConfiguration =
+            defaultConfiguration
+            ?? new CameraConfiguration(
+                new CameraResolution(1920, 1080),
+                PixelFormat.Rgb24,
+                new FrameRate(30)
+            );
+        _timeouts = timeouts ?? OperationTimeouts.CreateDefault();
         _channel = Channel.CreateUnbounded<OperationRequest>(
             new UnboundedChannelOptions { SingleReader = true, SingleWriter = false }
         );
@@ -53,6 +69,7 @@ public sealed class OperationScheduler : IDisposable
         ResourceId id,
         OwnerToken owner,
         OperationType op,
+        CameraConfiguration? configuration = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -62,7 +79,14 @@ public sealed class OperationScheduler : IDisposable
         }
 
         var ticket = OperationTicket.Accepted();
-        var req = new OperationRequest(ticket.OperationId, id, owner, op);
+        var req = new OperationRequest(
+            ticket.OperationId,
+            id,
+            owner,
+            op,
+            configuration,
+            cancellationToken
+        );
         // Fire-and-forget write; consume ValueTask via AsTask for analyzer compliance.
         _ = _channel.Writer.WriteAsync(req, _cts.Token).AsTask();
         _logger.Log(
@@ -83,6 +107,7 @@ public sealed class OperationScheduler : IDisposable
         OwnerToken owner,
         OperationType op,
         Guid operationId,
+        CameraConfiguration? configuration = null,
         CancellationToken cancellationToken = default
     )
     {
@@ -92,7 +117,14 @@ public sealed class OperationScheduler : IDisposable
         }
 
         var ticket = OperationTicket.Accepted(operationId);
-        var req = new OperationRequest(operationId, id, owner, op);
+        var req = new OperationRequest(
+            operationId,
+            id,
+            owner,
+            op,
+            configuration,
+            cancellationToken
+        );
         _ = _channel.Writer.WriteAsync(req, _cts.Token).AsTask();
         _logger.Log(LogLevel.Info, $"Accepted {op} id={id} opId={operationId}");
         return ticket;
@@ -132,6 +164,7 @@ public sealed class OperationScheduler : IDisposable
                             continue; // No event per policy
                         }
 
+                        using var cancellationScope = CreateCancellationScope(req);
                         try
                         {
                             var adapter = _resources.TryGet(req.Id)?.Adapter;
@@ -141,79 +174,62 @@ public sealed class OperationScheduler : IDisposable
                                 {
                                     case OperationType.StartStreaming:
                                         await adapter
-                                            .StartAsync(_cts.Token)
+                                            .StartAsync(cancellationScope.Token)
                                             .ConfigureAwait(false);
                                         break;
                                     case OperationType.Stop:
                                         await adapter
-                                            .StopAsync(_cts.Token)
+                                            .StopAsync(cancellationScope.Token)
                                             .ConfigureAwait(false);
                                         break;
                                     case OperationType.Pause:
                                         await adapter
-                                            .PauseAsync(_cts.Token)
+                                            .PauseAsync(cancellationScope.Token)
                                             .ConfigureAwait(false);
                                         break;
                                     case OperationType.Resume:
                                         await adapter
-                                            .ResumeAsync(_cts.Token)
+                                            .ResumeAsync(cancellationScope.Token)
                                             .ConfigureAwait(false);
                                         break;
                                     case OperationType.UpdateConfiguration:
                                         await adapter
                                             .UpdateConfigurationAsync(
-                                                new CameraConfiguration(
-                                                    new CameraResolution(1920, 1080),
-                                                    PixelFormat.Rgb24,
-                                                    new FrameRate(30)
-                                                ),
-                                                _cts.Token
+                                                ResolveConfiguration(req),
+                                                cancellationScope.Token
                                             )
                                             .ConfigureAwait(false);
                                         break;
                                 }
                             }
-
-                            var state = _resources.GetState(req.Id);
-                            var args = new OperationCompletedEventArgs(
-                                req.Id,
-                                req.OperationId,
-                                true,
-                                req.Operation,
-                                state,
-                                metadata: null,
-                                errorCode: null,
-                                timestampUtc: DateTime.UtcNow
-                            );
-                            _events.DispatchOperationCompleted(this, args);
-                            _metrics?.ObserveLatency(
-                                req.Operation.ToString(),
-                                DateTime.UtcNow - started
-                            );
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            HandleCancellationOrTimeout(req, cancellationScope);
+                            continue;
                         }
                         catch (Exception ex)
                         {
-                            _logger.Log(
-                                LogLevel.Error,
-                                $"Hardware op failed: {ex.Message}"
-                            );
-                            var state = _resources.GetState(req.Id);
-                            var args = new OperationCompletedEventArgs(
-                                req.Id,
-                                req.OperationId,
-                                false,
-                                req.Operation,
-                                state,
-                                metadata: null,
-                                errorCode: new ErrorCode("HW", 1001),
-                                timestampUtc: DateTime.UtcNow
-                            );
-                            _events.DispatchOperationCompleted(this, args);
-                            _metrics?.RecordFailure(
-                                req.Operation.ToString(),
-                                "HW1001"
-                            );
+                            HandleHardwareFailure(req, ex);
+                            continue;
                         }
+
+                        var state = _resources.GetState(req.Id);
+                        var args = new OperationCompletedEventArgs(
+                            req.Id,
+                            req.OperationId,
+                            true,
+                            req.Operation,
+                            state,
+                            metadata: null,
+                            errorCode: null,
+                            timestampUtc: DateTime.UtcNow
+                        );
+                        _events.DispatchOperationCompleted(this, args);
+                        _metrics?.ObserveLatency(
+                            req.Operation.ToString(),
+                            DateTime.UtcNow - started
+                        );
                     }
                     catch (Exception ex)
                     {
@@ -226,6 +242,106 @@ public sealed class OperationScheduler : IDisposable
         {
             // shutting down
         }
+    }
+
+    private CameraConfiguration ResolveConfiguration(OperationRequest request) =>
+        request.Configuration ?? _defaultConfiguration;
+
+    private OperationCancellationScope CreateCancellationScope(
+        OperationRequest request
+    )
+    {
+        var tokens = new List<CancellationToken> { _cts.Token };
+
+        if (request.CancellationToken.CanBeCanceled)
+        {
+            tokens.Add(request.CancellationToken);
+        }
+
+        var timeout = ResolveTimeout(request.Operation);
+        CancellationTokenSource? timeoutCts = null;
+        if (timeout > TimeSpan.Zero && timeout != Timeout.InfiniteTimeSpan)
+        {
+            timeoutCts = new CancellationTokenSource(timeout);
+            tokens.Add(timeoutCts.Token);
+        }
+
+        CancellationTokenSource? linkedCts = null;
+        CancellationToken token;
+        if (tokens.Count == 1)
+        {
+            token = tokens[0];
+        }
+        else
+        {
+            linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
+                tokens.ToArray()
+            );
+            token = linkedCts.Token;
+        }
+
+        return new OperationCancellationScope(timeoutCts, linkedCts, token);
+    }
+
+    private TimeSpan ResolveTimeout(OperationType operation) =>
+        operation switch
+        {
+            OperationType.StartStreaming => _timeouts.StartStreaming,
+            OperationType.Stop => _timeouts.Stop,
+            OperationType.Pause => _timeouts.Pause,
+            OperationType.Resume => _timeouts.Resume,
+            OperationType.UpdateConfiguration => _timeouts.UpdateConfiguration,
+            OperationType.Reset => _timeouts.Reset,
+            _ => _timeouts.Default,
+        };
+
+    private void HandleCancellationOrTimeout(
+        OperationRequest request,
+        OperationCancellationScope scope
+    )
+    {
+        var isTimeout = scope.IsTimeout;
+        var error = isTimeout ? TimeoutError : Cancelled;
+        var logLevel = isTimeout ? LogLevel.Error : LogLevel.Warning;
+        var message = isTimeout
+            ? $"Operation {request.Operation} timed out after {ResolveTimeout(request.Operation)} for opId={request.OperationId}"
+            : $"Operation {request.Operation} cancelled for opId={request.OperationId}";
+        _logger.Log(logLevel, message); // (REQ-CT-002) Trace cancellation/timeout.
+
+        var state = _resources.GetState(request.Id);
+        var args = new OperationCompletedEventArgs(
+            request.Id,
+            request.OperationId,
+            false,
+            request.Operation,
+            state,
+            metadata: null,
+            errorCode: error,
+            timestampUtc: DateTime.UtcNow
+        );
+        _events.DispatchOperationCompleted(this, args);
+        _metrics?.RecordFailure(request.Operation.ToString(), error.ToString());
+    }
+
+    private void HandleHardwareFailure(OperationRequest request, Exception ex)
+    {
+        _logger.Log(LogLevel.Error, $"Hardware op failed: {ex.Message}");
+        var state = _resources.GetState(request.Id);
+        var args = new OperationCompletedEventArgs(
+            request.Id,
+            request.OperationId,
+            false,
+            request.Operation,
+            state,
+            metadata: null,
+            errorCode: HardwareFailure,
+            timestampUtc: DateTime.UtcNow
+        );
+        _events.DispatchOperationCompleted(this, args);
+        _metrics?.RecordFailure(
+            request.Operation.ToString(),
+            HardwareFailure.ToString()
+        );
     }
 
     /// <summary>Stop background processing.</summary>
@@ -246,6 +362,35 @@ public sealed class OperationScheduler : IDisposable
         Guid OperationId,
         ResourceId Id,
         OwnerToken Owner,
-        OperationType Operation
+        OperationType Operation,
+        CameraConfiguration? Configuration,
+        CancellationToken CancellationToken
     );
+
+    private readonly struct OperationCancellationScope : IDisposable
+    {
+        private readonly CancellationTokenSource? _timeoutCts;
+        private readonly CancellationTokenSource? _linkedCts;
+
+        public OperationCancellationScope(
+            CancellationTokenSource? timeoutCts,
+            CancellationTokenSource? linkedCts,
+            CancellationToken token
+        )
+        {
+            Token = token;
+            _timeoutCts = timeoutCts;
+            _linkedCts = linkedCts;
+        }
+
+        public CancellationToken Token { get; }
+
+        public bool IsTimeout => _timeoutCts?.IsCancellationRequested == true;
+
+        public void Dispose()
+        {
+            _timeoutCts?.Dispose();
+            _linkedCts?.Dispose();
+        }
+    }
 }

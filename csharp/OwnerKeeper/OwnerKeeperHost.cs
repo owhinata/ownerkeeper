@@ -61,7 +61,9 @@ public sealed class OwnerKeeperHost : IDisposable
                 _resources,
                 _logger,
                 _metrics,
-                options.DebugMode
+                options.DebugMode,
+                options.DefaultConfiguration,
+                options.Timeouts
             );
 
             // Pre-register resources, bind adapters, and set initial state to Ready.

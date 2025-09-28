@@ -76,7 +76,7 @@ public sealed class OwnerSession : IOwnerSession
     public OperationTicket UpdateConfiguration(
         CameraConfiguration configuration,
         CancellationToken cancellationToken = default
-    ) => Enqueue(OperationType.UpdateConfiguration, cancellationToken);
+    ) => Enqueue(OperationType.UpdateConfiguration, cancellationToken, configuration);
 
     /// <summary>Reset from Error → Ready.</summary>
     public OperationTicket Reset(CancellationToken cancellationToken = default) =>
@@ -87,7 +87,11 @@ public sealed class OwnerSession : IOwnerSession
         CancellationToken cancellationToken = default
     ) => OperationTicket.Accepted();
 
-    private OperationTicket Enqueue(OperationType op, CancellationToken ct)
+    private OperationTicket Enqueue(
+        OperationType op,
+        CancellationToken ct,
+        CameraConfiguration? configuration = null
+    )
     {
         if (ct.IsCancellationRequested)
             return OperationTicket.FailedImmediately(new ErrorCode("CT", 0001));
@@ -122,6 +126,7 @@ public sealed class OwnerSession : IOwnerSession
             new Core.OwnerToken(SessionId),
             op,
             operationId,
+            configuration,
             ct
         );
         if (ticket.Status == OperationTicketStatus.FailedImmediately)
