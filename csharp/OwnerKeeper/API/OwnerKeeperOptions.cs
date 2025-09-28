@@ -1,4 +1,5 @@
 using OwnerKeeper.Domain;
+using OwnerKeeper.Hardware;
 
 namespace OwnerKeeper.API;
 
@@ -19,6 +20,9 @@ public sealed class OwnerKeeperOptions
 
     /// <summary>Enable verbose debug logs.</summary>
     public bool DebugMode { get; init; }
+
+    /// <summary>Optional hardware factory override (for tests/integration).</summary>
+    public IHardwareResourceFactory? HardwareFactory { get; init; }
 }
 
 /// <summary>Timeout settings for operations (placeholder for future phases).</summary>

@@ -189,9 +189,9 @@ public sealed class CameraMetadata
   - `Warning`: 再試行可能なエラー
   - `Error`: イベント失敗、所有権競合
 - `MetricsCollector`
-  - Counter: `operations_total{type}`, `operation_failures_total{type, error}`
-  - Gauge: `active_sessions`, `resource_state{state}`
-  - Histogram: `operation_latency_seconds`
+  - Counter: `ownerkeeper_operations_total{type}`, `ownerkeeper_operation_failures_total{type, error}`
+  - Histogram: `ownerkeeper_operation_latency_ms{type}`
+  - テスト容易性のため、メモリ上に最新値を公開（OperationsTotal/OperationFailures/LastLatencyMs）。
 - ヘルスチェックAPI `OwnerKeeperHost.GetHealthSnapshot()` を追加予定 (REQ-MN-002)。
 
 ## 9. セキュリティ

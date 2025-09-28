@@ -54,7 +54,8 @@ public sealed class OwnerKeeperHost : IDisposable
 
             // Pre-register resources, bind adapters, and set initial state to Ready.
             var count = Math.Max(0, options.CameraCount);
-            var factory = new Hardware.DefaultHardwareFactory();
+            var factory =
+                options.HardwareFactory ?? new Hardware.DefaultHardwareFactory();
             for (ushort i = 1; i <= count; i++)
             {
                 var id = new ResourceId(i, ResourceKind.Camera);
