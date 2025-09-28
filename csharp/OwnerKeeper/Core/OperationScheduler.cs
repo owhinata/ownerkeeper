@@ -65,6 +65,31 @@ public sealed class OperationScheduler : IDisposable
         return ticket;
     }
 
+    /// <summary>
+    /// Enqueue a request with a pre-generated operation id. Useful to avoid
+    /// race conditions when callers need to publish correlation ids before
+    /// scheduling. (Stable mapping for typed events)
+    /// </summary>
+    public OperationTicket Enqueue(
+        ResourceId id,
+        OwnerToken owner,
+        OperationType op,
+        Guid operationId,
+        CancellationToken cancellationToken = default
+    )
+    {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return OperationTicket.FailedImmediately(Cancelled);
+        }
+
+        var ticket = OperationTicket.Accepted(operationId);
+        var req = new OperationRequest(operationId, id, owner, op);
+        _ = _channel.Writer.WriteAsync(req, _cts.Token).AsTask();
+        _logger.Log(LogLevel.Info, $"Accepted {op} id={id} opId={operationId}");
+        return ticket;
+    }
+
     private async Task ProcessAsync()
     {
         try

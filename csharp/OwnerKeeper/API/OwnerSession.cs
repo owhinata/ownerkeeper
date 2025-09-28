@@ -107,15 +107,26 @@ public sealed class OwnerSession : IOwnerSession
             }
         }
 
+        // Pre-validate transition to avoid queuing illegal operations (ARG3001)
+        var currentState = _resources.GetState(ResourceId);
+        if (!StateMachine.TryGetNext(currentState, op, out _))
+        {
+            return OperationTicket.FailedImmediately(new ErrorCode("ARG", 3001));
+        }
+
+        // Generate operation id first and register as pending to avoid races
+        var operationId = Guid.NewGuid();
+        _pending[operationId] = op;
         var ticket = _scheduler.Enqueue(
             ResourceId,
             new Core.OwnerToken(SessionId),
             op,
+            operationId,
             ct
         );
-        if (ticket.Status == OperationTicketStatus.Accepted)
+        if (ticket.Status == OperationTicketStatus.FailedImmediately)
         {
-            _pending[ticket.OperationId] = op;
+            _pending.TryRemove(operationId, out _);
         }
         return ticket;
     }
