@@ -142,99 +142,7 @@ public sealed class OperationScheduler : IDisposable
             {
                 while (_channel.Reader.TryRead(out var req))
                 {
-                    try
-                    {
-                        var started = DateTime.UtcNow;
-                        var ticket = StateMachine.BeginOperation(
-                            _resources,
-                            req.Id,
-                            req.Owner,
-                            req.Operation
-                        );
-                        if (ticket.Status == OperationTicketStatus.FailedImmediately)
-                        {
-                            _logger.Log(
-                                LogLevel.Error,
-                                $"Immediate failure: {ticket.ErrorCode} for opId={req.OperationId}"
-                            );
-                            _metrics?.RecordFailure(
-                                req.Operation.ToString(),
-                                ticket.ErrorCode?.ToString() ?? "unknown"
-                            );
-                            continue; // No event per policy
-                        }
-
-                        using var cancellationScope = CreateCancellationScope(req);
-                        try
-                        {
-                            var adapter = _resources.TryGet(req.Id)?.Adapter;
-                            if (adapter is not null)
-                            {
-                                switch (req.Operation)
-                                {
-                                    case OperationType.StartStreaming:
-                                        await adapter
-                                            .StartAsync(cancellationScope.Token)
-                                            .ConfigureAwait(false);
-                                        break;
-                                    case OperationType.Stop:
-                                        await adapter
-                                            .StopAsync(cancellationScope.Token)
-                                            .ConfigureAwait(false);
-                                        break;
-                                    case OperationType.Pause:
-                                        await adapter
-                                            .PauseAsync(cancellationScope.Token)
-                                            .ConfigureAwait(false);
-                                        break;
-                                    case OperationType.Resume:
-                                        await adapter
-                                            .ResumeAsync(cancellationScope.Token)
-                                            .ConfigureAwait(false);
-                                        break;
-                                    case OperationType.UpdateConfiguration:
-                                        await adapter
-                                            .UpdateConfigurationAsync(
-                                                ResolveConfiguration(req),
-                                                cancellationScope.Token
-                                            )
-                                            .ConfigureAwait(false);
-                                        break;
-                                }
-                            }
-                        }
-                        catch (OperationCanceledException)
-                        {
-                            HandleCancellationOrTimeout(req, cancellationScope);
-                            continue;
-                        }
-                        catch (Exception ex)
-                        {
-                            HandleHardwareFailure(req, ex);
-                            continue;
-                        }
-
-                        var state = _resources.GetState(req.Id);
-                        var args = new OperationCompletedEventArgs(
-                            req.Id,
-                            req.OperationId,
-                            true,
-                            req.Operation,
-                            state,
-                            metadata: null,
-                            errorCode: null,
-                            timestampUtc: DateTime.UtcNow
-                        );
-                        _events.DispatchOperationCompleted(this, args);
-                        _metrics?.ObserveLatency(
-                            req.Operation.ToString(),
-                            DateTime.UtcNow - started
-                        );
-                    }
-                    catch (Exception ex)
-                    {
-                        _logger.Log(LogLevel.Error, $"Scheduler error: {ex.Message}");
-                    }
+                    await ProcessRequestAsync(req).ConfigureAwait(false);
                 }
             }
         }
@@ -244,8 +152,127 @@ public sealed class OperationScheduler : IDisposable
         }
     }
 
+    private async Task ProcessRequestAsync(OperationRequest req)
+    {
+        var started = DateTime.UtcNow;
+        try
+        {
+            if (!TryBeginOperation(req))
+            {
+                return;
+            }
+
+            using var cancellationScope = CreateCancellationScope(req);
+            var executed = await ExecuteAdapterAsync(req, cancellationScope)
+                .ConfigureAwait(false);
+            if (!executed)
+            {
+                return;
+            }
+
+            PublishSuccess(req, started);
+        }
+        catch (Exception ex)
+        {
+            _logger.Log(LogLevel.Error, $"Scheduler error: {ex.Message}");
+        }
+    }
+
     private CameraConfiguration ResolveConfiguration(OperationRequest request) =>
         request.Configuration ?? _defaultConfiguration;
+
+    private bool TryBeginOperation(OperationRequest request)
+    {
+        var ticket = StateMachine.BeginOperation(
+            _resources,
+            request.Id,
+            request.Owner,
+            request.Operation
+        );
+        if (ticket.Status == OperationTicketStatus.Accepted)
+        {
+            return true;
+        }
+
+        var error = ticket.ErrorCode?.ToString() ?? "unknown";
+        _logger.Log(
+            LogLevel.Error,
+            $"Immediate failure: {ticket.ErrorCode} for opId={request.OperationId}"
+        );
+        _metrics?.RecordFailure(request.Operation.ToString(), error);
+        return false; // No event per policy
+    }
+
+    private async Task<bool> ExecuteAdapterAsync(
+        OperationRequest request,
+        OperationCancellationScope scope
+    )
+    {
+        try
+        {
+            var adapter = _resources.TryGet(request.Id)?.Adapter;
+            if (adapter is null)
+            {
+                return true;
+            }
+
+            switch (request.Operation)
+            {
+                case OperationType.StartStreaming:
+                    await adapter.StartAsync(scope.Token).ConfigureAwait(false);
+                    break;
+                case OperationType.Stop:
+                    await adapter.StopAsync(scope.Token).ConfigureAwait(false);
+                    break;
+                case OperationType.Pause:
+                    await adapter.PauseAsync(scope.Token).ConfigureAwait(false);
+                    break;
+                case OperationType.Resume:
+                    await adapter.ResumeAsync(scope.Token).ConfigureAwait(false);
+                    break;
+                case OperationType.UpdateConfiguration:
+                    await adapter
+                        .UpdateConfigurationAsync(
+                            ResolveConfiguration(request),
+                            scope.Token
+                        )
+                        .ConfigureAwait(false);
+                    break;
+            }
+
+            return true;
+        }
+        catch (OperationCanceledException)
+        {
+            HandleCancellationOrTimeout(request, scope);
+            return false;
+        }
+        catch (Exception ex)
+        {
+            HandleHardwareFailure(request, ex);
+            return false;
+        }
+    }
+
+    private void PublishSuccess(OperationRequest request, DateTime startedUtc)
+    {
+        var state = _resources.GetState(request.Id);
+        var args = new OperationCompletedEventArgs(
+            request.Id,
+            request.OperationId,
+            true,
+            request.Operation,
+            state,
+            metadata: null,
+            errorCode: null,
+            timestampUtc: DateTime.UtcNow
+        );
+        _events.DispatchOperationCompleted(this, args);
+        _metrics?.ObserveLatency(
+            request.Operation.ToString(),
+            DateTime.UtcNow - startedUtc
+        );
+    }
 
     private OperationCancellationScope CreateCancellationScope(
         OperationRequest request
