@@ -6,8 +6,8 @@ namespace OwnerKeeper.Core;
 
 /// <summary>
 /// Validates and applies state transitions according to ST-1 rules.
-/// Misuse -> InvalidOperationException(ARG3001). Runtime preconditions (ownership)
-/// failure -> OperationTicket.FailedImmediately(OWN2001). (SPECS §5.2)
+/// Disallowed transitions -> OperationTicket.FailedImmediately(ARG3001)
+/// Ownership precondition failure -> FailedImmediately(OWN2001). (SPECS §5.2)
 /// </summary>
 public sealed class StateMachine
 {

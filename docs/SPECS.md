@@ -107,8 +107,10 @@ public delegate void StopStreamingEventHandler(object sender, OperationCompleted
 
 public sealed class OperationCompletedEventArgs : EventArgs
 {
+    public ResourceId ResourceId { get; }
     public Guid OperationId { get; }
     public bool IsSuccess { get; }
+    public OperationType Operation { get; }
     public CameraState State { get; }                 // REQ-EV-002
     public CameraMetadata Metadata { get; }           // 成功時のみ有効、REQ-CF-001
     public ErrorCode? ErrorCode { get; }              // 失敗時、REQ-EV-003
