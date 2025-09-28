@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using OwnerKeeper.API;
 using OwnerKeeper.Core;
 using OwnerKeeper.Core.Logging;
@@ -16,6 +17,17 @@ public sealed class OwnerKeeperHost : IDisposable
 
     /// <summary>Singleton instance of the host.</summary>
     public static OwnerKeeperHost Instance => _instance;
+
+    /// <summary>Library semantic version, derived from assembly info when available.</summary>
+    public static string LibraryVersion =>
+        (
+            typeof(OwnerKeeperHost)
+                .Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()
+                ?.InformationalVersion
+        )
+        ?? (
+            typeof(OwnerKeeperHost).Assembly.GetName().Version?.ToString() ?? "0.0.0"
+        );
 
     private readonly object _gate = new();
     private bool _initialized;
