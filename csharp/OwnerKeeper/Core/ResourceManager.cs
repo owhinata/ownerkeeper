@@ -123,6 +123,41 @@ public sealed class ResourceManager : IDisposable
     public ResourceDescriptor? TryGet(ResourceId id) =>
         _table.TryGetValue(id, out var d) ? d : null;
 
+    /// <summary>
+    /// Set the state of a resource under write lock. Creates the descriptor if
+    /// not present. Intended for initialization and controlled transitions.
+    /// (SPECS §5.2)
+    /// </summary>
+    public void SetState(ResourceId id, CameraState next)
+    {
+        _rw.EnterWriteLock();
+        try
+        {
+            var desc = _table.GetOrAdd(id, static key => new ResourceDescriptor(key));
+            desc.State = next;
+        }
+        finally
+        {
+            _rw.ExitWriteLock();
+        }
+    }
+
+    /// <summary>Get the current state; returns Uninitialized if not registered.</summary>
+    public CameraState GetState(ResourceId id)
+    {
+        _rw.EnterReadLock();
+        try
+        {
+            return _table.TryGetValue(id, out var desc)
+                ? desc.State
+                : CameraState.Uninitialized;
+        }
+        finally
+        {
+            _rw.ExitReadLock();
+        }
+    }
+
     /// <summary>Dispose managed resources (locks).</summary>
     public void Dispose()
     {

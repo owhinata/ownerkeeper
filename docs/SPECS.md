@@ -146,9 +146,9 @@ public sealed class CameraMetadata
 
 ### 5.2 状態遷移実装
 - `StateMachine` は ST-1 のテーブルを `Dictionary<CameraState, List<StateTransitionRule>>` で保持。
-- 遷移可否判定に失敗した場合:
-  - 誤用（例: `StartStreaming` in Streaming状態）は `InvalidOperationException` (`ARG3001`) を送出 (REQ-ER-001)。
-  - ランタイム要因（例: 所有権競合、タイミング競合など）で非同期実行前に失敗が確定した場合は `OperationTicketStatus.FailedImmediately` と `ErrorCode` を設定して返却する (REQ-ER-002, REQ-RC-002)。
+- 遷移可否判定に失敗した場合は、すべて「即時失敗チケット」で返却する。
+  - 不正遷移は `OperationTicketStatus.FailedImmediately` として `ARG3001` を返却し、例外は投げない（Runtimeでユーザが防ぎようがないため）。
+  - 所有権競合などのランタイム要因も同様に `FailedImmediately` で返却する (REQ-ER-002, REQ-RC-002)。
   - 非同期処理中に発生したランタイム要因（例: ハードウェア異常）はイベントで通知する (REQ-ER-003)。
 - 状態変更時は `StatusChanged` イベントを発火し、監視メトリクスを更新 (REQ-MN-001, REQ-EV-001)。
 
