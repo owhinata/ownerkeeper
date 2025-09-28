@@ -96,6 +96,7 @@ public sealed class OperationScheduler : IDisposable
 
                         var state = _resources.GetState(req.Id);
                         var args = new OperationCompletedEventArgs(
+                            req.Id,
                             req.OperationId,
                             true,
                             req.Operation,

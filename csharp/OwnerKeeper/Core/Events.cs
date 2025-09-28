@@ -6,6 +6,9 @@ namespace OwnerKeeper.Core;
 /// <summary>Event args for operation completion notifications. (SPECS §4.3)</summary>
 public sealed class OperationCompletedEventArgs : EventArgs
 {
+    /// <summary>Target resource identifier.</summary>
+    public ResourceId ResourceId { get; }
+
     /// <summary>Operation identifier (correlates to the issued ticket).</summary>
     public Guid OperationId { get; }
 
@@ -29,6 +32,7 @@ public sealed class OperationCompletedEventArgs : EventArgs
 
     /// <summary>Create event args for an operation completion.</summary>
     public OperationCompletedEventArgs(
+        ResourceId resourceId,
         Guid operationId,
         bool isSuccess,
         OperationType operation,
@@ -38,6 +42,7 @@ public sealed class OperationCompletedEventArgs : EventArgs
         DateTime timestampUtc
     )
     {
+        ResourceId = resourceId;
         OperationId = operationId;
         IsSuccess = isSuccess;
         Operation = operation;

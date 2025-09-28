@@ -140,6 +140,8 @@ public class OperationSchedulerTests
 
         var result = await Task.WhenAny(tcs.Task, Task.Delay(1000));
         Assert.AreSame(tcs.Task, result, "Second handler did not run");
+        // Allow async handler to complete and logging to occur
+        await Task.Delay(50);
         Assert.IsTrue(logger.ErrorCount >= 1, "Handler exception was not logged");
     }
 }
