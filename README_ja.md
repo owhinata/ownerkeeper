@@ -81,6 +81,25 @@ DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet build OwnerKeeper.sln -v minimal
 DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet test OwnerKeeper.sln -v minimal
 ```
 
+## コードカバレッジ
+Coverlet（`OwnerKeeper.Tests` で MSBuild 連携済み）を利用します:
+
+```bash
+# Cobertura 形式の XML を生成
+dotnet test \
+  /p:CollectCoverage=true \
+  /p:CoverletOutput=TestResults/coverage/ \
+  /p:CoverletOutputFormat=cobertura
+
+# LCOV 形式（SonarQube や Web 用ツール向け）を生成
+dotnet test \
+  /p:CollectCoverage=true \
+  /p:CoverletOutput=TestResults/coverage/ \
+  /p:CoverletOutputFormat=lcov
+```
+
+`CoverletOutputFormat` を `json` や `opencover` に切り替えることで、他形式も出力できます。必要に応じて ReportGenerator 等で可視化してください。
+
 ## 開発者向けメモ
 - アナライザ有効・警告はエラー扱い（`Directory.Build.props`）
 - コメント／XML ドキュメントは英語（`AGENTS.md`）
@@ -95,4 +114,3 @@ DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet test OwnerKeeper.sln -v minimal
 
 ## ライセンス
 - `LICENSE` を参照
-

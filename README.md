@@ -82,6 +82,25 @@ DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet build OwnerKeeper.sln -v minimal
 DOTNET_CLI_TELEMETRY_OPTOUT=1 dotnet test OwnerKeeper.sln -v minimal
 ```
 
+## Code Coverage
+Coverage is collected via Coverlet (MSBuild integration already referenced in `OwnerKeeper.Tests`):
+
+```bash
+# Cobertura XML output
+dotnet test \
+  /p:CollectCoverage=true \
+  /p:CoverletOutput=TestResults/coverage/ \
+  /p:CoverletOutputFormat=cobertura
+
+# LCOV output (e.g., for SonarQube or front-end tooling)
+dotnet test \
+  /p:CollectCoverage=true \
+  /p:CoverletOutput=TestResults/coverage/ \
+  /p:CoverletOutputFormat=lcov
+```
+
+Additional formats are available by changing `CoverletOutputFormat` (e.g., `json`, `opencover`).
+
 ## Developer Notes
 - Code style: analyzers enabled, warnings treated as errors
 - Comments & XML docs: English (see `AGENTS.md`)
@@ -93,4 +112,3 @@ See `RELEASE_NOTES.md`.
 
 ## License
 See `LICENSE`.
-
